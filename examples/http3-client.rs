@@ -343,15 +343,28 @@ fn main() {
                                 req_start.elapsed()
                             );
 
-                            match conn.close(true, 0x00, b"kthxbye") {
+                            /*match conn.close(true, 0x00, b"kthxbye") {
                                 // Already closed.
                                 Ok(_) | Err(quiche::Error::Done) => (),
 
                                 Err(e) => panic!("error closing conn: {:?}", e),
                             }
 
-                            break;
+                            break;*/
                         }
+                    },
+
+                    Ok((
+                        stream_id,
+                        quiche::h3::Event::PushPromise(push_id, headers),
+                    )) => {
+                        info!(
+                            "{} got push headers {:?} for push id {} on stream id {}",
+                            conn.trace_id(),
+                            headers,
+                            push_id,
+                            stream_id
+                        );
                     },
 
                     Err(quiche::h3::Error::Done) => {

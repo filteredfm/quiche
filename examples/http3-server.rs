@@ -347,6 +347,8 @@ fn main() {
                             break;
                         },
 
+                        Ok((_stream_id, quiche::h3::Event::PushPromise(..))) => unreachable!(),
+
                         Err(e) => {
                             error!(
                                 "{} HTTP/3 error {:?}",
@@ -482,6 +484,57 @@ fn handle_request(
         stream_id
     );
 
+    match build_push_response(root, headers) {
+        Ok((push_headers, resp_headers, body)) => {
+            match http3_conn.send_push_promise(
+                conn,
+                stream_id,
+                &push_headers,
+                false,
+            ) {
+                Ok(push_id) => {
+                    match http3_conn.push_response(
+                        conn,
+                        push_id,
+                        &resp_headers,
+                        false,
+                    ) {
+                        Ok(push_response_stream_id) => {
+                            if let Err(e) = http3_conn.send_body(
+                                conn,
+                                push_response_stream_id,
+                                &body,
+                                true,
+                            ) {
+                                error!(
+                                    "{} stream send failed {:?}",
+                                    conn.trace_id(),
+                                    e
+                                );
+                            }
+                        },
+
+                        Err(e) => {
+                            error!(
+                                "{} stream send failed {:?}",
+                                conn.trace_id(),
+                                e
+                            );
+                        },
+                    }
+                },
+
+                Err(e) => {
+                    error!("{} stream send failed {:?}", conn.trace_id(), e);
+                },
+            }
+        },
+
+        Err(e) => {
+            error!("{} failed to build response {:?}", conn.trace_id(), e);
+        },
+    }
+
     match build_response(root, headers) {
         Ok((headers, body)) => {
             if let Err(e) =
@@ -512,7 +565,8 @@ fn build_response(
     for hdr in request {
         match hdr.name() {
             ":path" => {
-                path = std::path::Path::new(hdr.value());
+                let v: Vec<&str> = hdr.value().split('?').collect();
+                path = std::path::Path::new(v[0]);
             },
 
             ":method" =>
@@ -550,4 +604,73 @@ fn hex_dump(buf: &[u8]) -> String {
     let vec: Vec<String> = buf.iter().map(|b| format!("{:02x}", b)).collect();
 
     vec.join("")
+}
+
+fn build_push_response(
+    root: &str, request: &[quiche::h3::Header],
+) -> Result<
+    (
+        std::vec::Vec<quiche::h3::Header>,
+        std::vec::Vec<quiche::h3::Header>,
+        std::vec::Vec<u8>,
+    ),
+    (),
+> {
+    let mut file_path = std::path::PathBuf::from(root);
+    let mut path = std::path::Path::new("");
+    let mut authority = "";
+    let mut scheme = "";
+
+    for hdr in request {
+        match hdr.name() {
+            ":path" => {
+                let v: Vec<&str> = hdr.value().split("?push=").collect();
+                path = std::path::Path::new(v[1]);
+            },
+
+            ":authority" => {
+                authority = hdr.value();
+            },
+
+            ":scheme" => {
+                scheme = hdr.value();
+            },
+
+            ":method" =>
+                if hdr.value() != "GET" {
+                    return Err(());
+                },
+
+            _ => (),
+        }
+    }
+
+    let push = vec![
+        quiche::h3::Header::new(":method", "GET"),
+        quiche::h3::Header::new(":scheme", scheme),
+        quiche::h3::Header::new(":authority", authority),
+        quiche::h3::Header::new(":path", path.to_str().unwrap()),
+        quiche::h3::Header::new("user-agent", "quiche"),
+    ];
+
+    for c in path.components() {
+        if let std::path::Component::Normal(v) = c {
+            file_path.push(v)
+        }
+    }
+
+    let (status, body) = match std::fs::read(file_path.as_path()) {
+        Ok(data) => (200, data),
+        Err(_) => (404, b"Not Found!".to_vec()),
+    };
+
+    Ok((
+        push,
+        vec![
+            quiche::h3::Header::new(":status", &status.to_string()),
+            quiche::h3::Header::new("server", "quiche"),
+            quiche::h3::Header::new("content-length", &body.len().to_string()),
+        ],
+        body,
+    ))
 }
