@@ -492,6 +492,10 @@ pub enum Event {
     /// [`recv_body()`]: struct.Connection.html#method.recv_body
     Data,
 
+    /// Push promise was received.
+    PushPromise(u64, Vec<Header>),
+
+    // PushResponse(u64, Vec<Header>),
     /// Stream was closed,
     Finished,
 }
@@ -589,6 +593,10 @@ impl Connection {
 
         http3_conn.send_settings(conn)?;
 
+        if !conn.is_server {
+            http3_conn.send_max_push_id(conn, 100)?;
+        }
+
         // Try opening QPACK streams, but ignore errors if it fails since we
         // don't need them right now.
         http3_conn.open_qpack_encoder_stream(conn).ok();
@@ -629,6 +637,68 @@ impl Connection {
         self.send_headers(conn, stream_id, headers, fin)?;
 
         Ok(())
+    }
+
+    /// Sends an HTTP/3 push promise on the specified stream.
+    ///
+    /// On success the newly allocated push ID is returned.
+    pub fn send_push_promise(
+        &mut self, conn: &mut super::Connection, stream_id: u64,
+        headers: &[Header], fin: bool,
+    ) -> Result<u64> {
+        let push_id = 1;
+
+        let mut d = [42; 10];
+        let mut b = octets::Octets::with_slice(&mut d);
+
+        let header_block = self.encode_header_block(headers)?;
+
+        trace!(
+            "{} sending PUSH_PROMISE of size {} on stream {}",
+            conn.trace_id(),
+            header_block.len(),
+            stream_id
+        );
+
+        conn.stream_send(
+            stream_id,
+            b.put_varint(frame::PUSH_PROMISE_FRAME_TYPE_ID)?,
+            false,
+        )?;
+
+        conn.stream_send(
+            stream_id,
+            b.put_varint(
+                octets::varint_len(push_id) as u64 + header_block.len() as u64,
+            )?,
+            false,
+        )?;
+
+        conn.stream_send(stream_id, b.put_varint(push_id)?, false)?;
+
+        conn.stream_send(stream_id, &header_block, fin)?;
+
+        Ok(push_id)
+    }
+
+    /// Pushes an HTTP/3 request for the specified ID.
+    pub fn push_response(
+        &mut self, conn: &mut super::Connection, push_id: u64,
+        headers: &[Header], fin: bool,
+    ) -> Result<u64> {
+        let stream_id =
+            self.open_uni_stream(conn, stream::HTTP3_PUSH_STREAM_TYPE_ID)?;
+
+        // self.streams
+        //    .insert(stream_id, stream::Stream::new(stream_id, true));
+
+        let mut d = [0; 8];
+        let mut b = octets::Octets::with_slice(&mut d);
+
+        conn.stream_send(stream_id, b.put_varint(push_id)?, false)?;
+        self.send_headers(conn, stream_id, headers, fin)?;
+
+        Ok(stream_id)
     }
 
     fn encode_header_block(&mut self, headers: &[Header]) -> Result<Vec<u8>> {
@@ -678,6 +748,7 @@ impl Connection {
             b.put_varint(header_block.len() as u64)?,
             false,
         )?;
+
         conn.stream_send(stream_id, &header_block, fin)?;
 
         Ok(())
@@ -694,9 +765,9 @@ impl Connection {
         let mut b = octets::Octets::with_slice(&mut d);
 
         // Validate that it is sane to send data on the stream.
-        if !self.streams.contains_key(&stream_id) || stream_id % 4 != 0 {
-            return Err(Error::WrongStream);
-        }
+        // if !self.streams.contains_key(&stream_id) || stream_id % 4 != 0 {
+        //    return Err(Error::WrongStream);
+        //}
 
         trace!(
             "{} sending DATA frame of size {} on stream {}",
@@ -782,7 +853,7 @@ impl Connection {
             self.streams.iter_mut().filter(|s| !s.1.peer_fin())
         {
             if let Some(frame) = stream.get_frame() {
-                trace!(
+                info!(
                     "{} rx frm {:?} on stream {}",
                     conn.trace_id(),
                     frame,
@@ -922,7 +993,10 @@ impl Connection {
                         self.max_push_id = push_id;
                     },
 
-                    frame::Frame::PushPromise { .. } => {
+                    frame::Frame::PushPromise {
+                        push_id,
+                        mut header_block,
+                    } => {
                         if self.is_server {
                             conn.close(
                                 true,
@@ -944,6 +1018,15 @@ impl Connection {
                         }
 
                         // TODO: implement more checks and PUSH_PROMISE event
+                        let headers = self
+                            .qpack_decoder
+                            .decode(&mut header_block[..])
+                            .map_err(|_| Error::QpackDecompressionFailed)?;
+
+                        return Ok((
+                            *stream_id,
+                            Event::PushPromise(push_id, headers),
+                        ));
                     },
 
                     frame::Frame::DuplicatePush { .. } => {
@@ -1173,6 +1256,25 @@ impl Connection {
         Ok(())
     }
 
+    fn send_max_push_id(
+        &mut self, conn: &mut super::Connection, push_id: u64,
+    ) -> Result<()> {
+        let frame = frame::Frame::MaxPushId { push_id };
+
+        let mut d = [42; 128];
+        let mut b = octets::Octets::with_slice(&mut d);
+
+        frame.to_bytes(&mut b)?;
+
+        let off = b.off();
+
+        if let Some(id) = self.control_stream_id {
+            conn.stream_send(id, &d[..off], false)?;
+        }
+
+        Ok(())
+    }
+
     fn handle_stream(
         &mut self, conn: &mut super::Connection, stream_id: u64,
     ) -> Result<()> {
@@ -1385,6 +1487,24 @@ impl Connection {
 
                     break;
                 },
+
+                /*stream::State::PushIdLen => {
+                    let varint_byte = stream.buf_bytes(1)?[0];
+                    stream.set_next_varint_len(octets::varint_parse_len(
+                        varint_byte,
+                    ))?
+                },
+
+                stream::State::PushId => {
+                    // TODO: must read the push ID varint but
+                    // have nothing to use if for yet
+                    let _varint = stream.get_varint()?;
+                    let varint_byte = stream.buf_bytes(1)?[0];
+                    stream.set_next_varint_len(octets::varint_parse_len(
+                        varint_byte,
+                    ))?
+                },*/
+
             }
         }
 
