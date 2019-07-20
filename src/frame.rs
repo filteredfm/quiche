@@ -57,7 +57,7 @@ pub enum Frame {
 
     StopSending {
         stream_id: u64,
-        error_code: u16,
+        error_code: u64,
     },
 
     Crypto {
@@ -170,7 +170,7 @@ impl Frame {
 
             0x05 => Frame::StopSending {
                 stream_id: b.get_varint()?,
-                error_code: b.get_u16()?,
+                error_code: b.get_varint()?,
             },
 
             0x06 => {
@@ -344,7 +344,7 @@ impl Frame {
                 b.put_varint(0x05)?;
 
                 b.put_varint(*stream_id)?;
-                b.put_u16(*error_code)?;
+                b.put_varint(*error_code)?;
             },
 
             Frame::Crypto { data } => {
@@ -533,10 +533,10 @@ impl Frame {
                 octets::varint_len(*final_size) // final_size
             },
 
-            Frame::StopSending { stream_id, .. } => {
+            Frame::StopSending { stream_id, error_code } => {
                 1 + // frame type
                 octets::varint_len(*stream_id) + // stream_id
-                2 // error_code
+                octets::varint_len(*error_code)  // error_code
             },
 
             Frame::Crypto { data } => {
