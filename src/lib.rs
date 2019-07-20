@@ -2537,7 +2537,8 @@ struct TransportParams {
     pub ack_delay_exponent: u64,
     pub max_ack_delay: u64,
     pub disable_migration: bool,
-    // pub preferred_address: ...
+    // pub preferred_address: ...,
+    pub active_conn_id_limit: u64,
 }
 
 impl Default for TransportParams {
@@ -2556,6 +2557,7 @@ impl Default for TransportParams {
             ack_delay_exponent: 3,
             max_ack_delay: 25,
             disable_migration: false,
+            active_conn_id_limit: 0,
         }
     }
 }
@@ -2668,6 +2670,10 @@ impl TransportParams {
                     // TODO: decode preferred_address
                 },
 
+                0x000e => {
+                    tp.active_conn_id_limit = val.get_varint()?;
+                },
+
                 // Ignore unknown parameters.
                 _ => (),
             }
@@ -2772,6 +2778,12 @@ impl TransportParams {
             }
 
             // TODO: encode preferred_address
+
+            if tp.active_conn_id_limit != 0 {
+                b.put_u16(0x000e)?;
+                b.put_u16(octets::varint_len(tp.active_conn_id_limit) as u16)?;
+                b.put_varint(tp.active_conn_id_limit)?;
+            }
 
             b.off()
         };
@@ -3143,12 +3155,13 @@ mod tests {
             ack_delay_exponent: 20,
             max_ack_delay: 2_u64.pow(14) - 1,
             disable_migration: true,
+            active_conn_id_limit: 8,
         };
 
         let mut raw_params = [42; 256];
         let mut raw_params =
             TransportParams::encode(&tp, true, &mut raw_params).unwrap();
-        assert_eq!(raw_params.len(), 96);
+        assert_eq!(raw_params.len(), 101);
 
         let new_tp = TransportParams::decode(&mut raw_params, false).unwrap();
 
