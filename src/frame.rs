@@ -109,6 +109,7 @@ pub enum Frame {
 
     NewConnectionId {
         seq_num: u64,
+        retire_prior_to: u64,
         conn_id: Vec<u8>,
         reset_token: Vec<u8>,
     },
@@ -223,6 +224,7 @@ impl Frame {
 
             0x18 => Frame::NewConnectionId {
                 seq_num: b.get_varint()?,
+                retire_prior_to: b.get_varint()?,
                 conn_id: b.get_bytes_with_u8_length()?.to_vec(),
                 reset_token: b.get_bytes(16)?.to_vec(),
             },
@@ -435,12 +437,14 @@ impl Frame {
 
             Frame::NewConnectionId {
                 seq_num,
+                retire_prior_to,
                 conn_id,
                 reset_token,
             } => {
                 b.put_varint(0x18)?;
 
                 b.put_varint(*seq_num)?;
+                b.put_varint(*retire_prior_to)?;
                 b.put_u8(conn_id.len() as u8)?;
                 b.put_bytes(conn_id.as_ref())?;
                 b.put_bytes(reset_token.as_ref())?;
@@ -604,11 +608,13 @@ impl Frame {
 
             Frame::NewConnectionId {
                 seq_num,
+                retire_prior_to,
                 conn_id,
                 reset_token,
             } => {
                 1 + // frame type
                 octets::varint_len(*seq_num) + // seq_num
+                octets::varint_len(*retire_prior_to) + // retire_prior_to
                 1 + // conn_id length
                 conn_id.len() + // conn_id
                 reset_token.len() // reset_token
@@ -1393,6 +1399,7 @@ mod tests {
 
         let frame = Frame::NewConnectionId {
             seq_num: 123_213,
+            retire_prior_to: 122_211,
             conn_id: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             reset_token: vec![0x42; 16],
         };
@@ -1402,7 +1409,7 @@ mod tests {
             frame.to_bytes(&mut b).unwrap()
         };
 
-        assert_eq!(wire_len, 37);
+        assert_eq!(wire_len, 41);
 
         let mut b = octets::Octets::with_slice(&mut d);
         assert_eq!(
