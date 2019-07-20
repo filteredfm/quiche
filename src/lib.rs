@@ -1619,7 +1619,7 @@ impl Connection {
         // Create CONNECTION_CLOSE frame.
         if let Some(err) = self.error {
             let frame = frame::Frame::ConnectionClose {
-                error_code: err,
+                error_code: u64::from(err),
                 frame_type: 0,
                 reason: Vec::new(),
             };

@@ -127,7 +127,7 @@ pub enum Frame {
     },
 
     ConnectionClose {
-        error_code: u16,
+        error_code: u64,
         frame_type: u64,
         reason: Vec<u8>,
     },
@@ -242,7 +242,7 @@ impl Frame {
             },
 
             0x1c => Frame::ConnectionClose {
-                error_code: b.get_u16()?,
+                error_code: b.get_varint()?,
                 frame_type: b.get_varint()?,
                 reason: b.get_bytes_with_varint_length()?.to_vec(),
             },
@@ -475,7 +475,7 @@ impl Frame {
             } => {
                 b.put_varint(0x1c)?;
 
-                b.put_u16(*error_code)?;
+                b.put_varint(*error_code)?;
                 b.put_varint(*frame_type)?;
                 b.put_varint(reason.len() as u64)?;
                 b.put_bytes(reason.as_ref())?;
@@ -537,10 +537,13 @@ impl Frame {
                 octets::varint_len(*final_size) // final_size
             },
 
-            Frame::StopSending { stream_id, error_code } => {
+            Frame::StopSending {
+                stream_id,
+                error_code,
+            } => {
                 1 + // frame type
                 octets::varint_len(*stream_id) + // stream_id
-                octets::varint_len(*error_code)  // error_code
+                octets::varint_len(*error_code) // error_code
             },
 
             Frame::Crypto { data } => {
@@ -636,10 +639,13 @@ impl Frame {
             },
 
             Frame::ConnectionClose {
-                frame_type, reason, ..
+                frame_type,
+                error_code,
+                reason,
+                ..
             } => {
                 1 + // frame type
-                2 + // error_code
+                octets::varint_len(*error_code) + // error_code
                 octets::varint_len(*frame_type) + // frame_type
                 octets::varint_len(reason.len() as u64) + // reason_len
                 reason.len() // reason
@@ -1533,7 +1539,7 @@ mod tests {
             frame.to_bytes(&mut b).unwrap()
         };
 
-        assert_eq!(wire_len, 20);
+        assert_eq!(wire_len, 22);
 
         let mut b = octets::Octets::with_slice(&mut d);
         assert_eq!(
