@@ -33,6 +33,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+use serde::ser::{Serialize, SerializeStruct/*, Serializer*/};
+
 use crate::Error;
 use crate::Result;
 
@@ -869,11 +871,23 @@ impl SendBuf {
 }
 
 /// Buffer holding data at a specific offset.
-#[derive(Clone, Debug, Default, Eq)]
+#[derive(Clone, Debug, Default, Eq, serde::Deserialize)]
 pub struct RangeBuf {
     data: Vec<u8>,
     off: u64,
     fin: bool,
+}
+
+impl Serialize for RangeBuf {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("RangeBuf", 2)?;
+        s.serialize_field("offset", &self.off.to_string())?;
+        s.serialize_field("length", &self.data.len().to_string())?;
+        s.end()
+    }
 }
 
 impl RangeBuf {

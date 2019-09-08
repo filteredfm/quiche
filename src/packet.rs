@@ -36,6 +36,8 @@ use crate::rand;
 use crate::ranges;
 use crate::stream;
 
+use serde::ser::{/*Serialize,*/ SerializeStruct, Serializer};
+
 const FORM_BIT: u8 = 0x80;
 const FIXED_BIT: u8 = 0x40;
 const KEY_PHASE_BIT: u8 = 0x04;
@@ -401,6 +403,45 @@ impl std::fmt::Debug for Header {
         }
 
         Ok(())
+    }
+}
+
+struct HexSlice<'a>(&'a [u8]);
+
+impl<'a> HexSlice<'a> {
+    fn new<T>(data: &'a T) -> HexSlice<'a>
+        where T: ?Sized + AsRef<[u8]> + 'a
+    {
+        HexSlice(data.as_ref())
+    }
+}
+
+// You can even choose to implement multiple traits, like Lower and UpperHex
+impl<'a> std::fmt::Display for HexSlice<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for byte in self.0 {
+            // Decide if you want to pad out the value here
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
+impl serde::Serialize for Header {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("Packet", 1)?;
+        //s.serialize_field("packet_type", self.ty)?;
+        s.serialize_field("version", &format!("{:x?}", self.version))?;
+        s.serialize_field("scid", &format!("{}", HexSlice::new(&self.scid)))?;
+        s.serialize_field("dcid", &format!("{}", HexSlice::new(&self.dcid)))?;
+        s.serialize_field("scil", &format!("{}", self.scid.len()))?;
+        s.serialize_field("dcil", &format!("{}", self.dcid.len()))?;
+        s.serialize_field("payload_length", &format!("{}", self.dcid.len()))?;
+
+        s.end()
     }
 }
 

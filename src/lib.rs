@@ -1852,6 +1852,11 @@ impl Connection {
             frame.to_bytes(&mut b)?;
         }
 
+        //let jay = serde_json::json!({"k": "v"});
+
+        trace!("{}", serde_json::to_string(&hdr).unwrap());
+        trace!("\"frames\": {}", serde_json::to_string(&frames).unwrap());
+
         let aead = match self.pkt_num_spaces[epoch].crypto_seal {
             Some(ref v) => v,
             None => return Err(Error::InvalidState),
@@ -4401,3 +4406,5 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+#[doc(hidden)]
+pub mod qlog;

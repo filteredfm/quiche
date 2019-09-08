@@ -33,11 +33,13 @@ use crate::packet;
 use crate::ranges;
 use crate::stream;
 
+use serde::ser::{/*Serialize,*/ SerializeStruct, Serializer};
+
 pub const MAX_CRYPTO_OVERHEAD: usize = 8;
 pub const MAX_STREAM_OVERHEAD: usize = 12;
 pub const MAX_STREAM_SIZE: u64 = 1 << 62;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Deserialize)]
 pub enum Frame {
     Padding {
         len: usize,
@@ -801,6 +803,82 @@ impl std::fmt::Debug for Frame {
         }
 
         Ok(())
+    }
+}
+
+impl serde::Serialize for Frame {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Frame::Padding { .. } => {
+                let mut s = serializer.serialize_struct("Padding", 1)?;
+                s.serialize_field("frame_type", "padding")?;
+                s.end()
+            },
+
+            Frame::ACK { ack_delay, ranges } => {
+                let mut s = serializer.serialize_struct("Ack", 3)?;
+                s.serialize_field("frame_type", "ack")?;
+                s.serialize_field("ack_delay", &ack_delay.to_string())?;
+                //let bob = serde_json::to_string(ranges).unwrap();
+                //let bob = ranges.iter().collect::<Vec<(u64,u64)>>();
+                let mut dave = Vec::new();
+                let bob = ranges.iter()
+                .map(|mut r| {
+                    r.end -= 1;
+                    r
+                })
+                .collect::<Vec<std::ops::Range<u64>>>();
+                for b in bob {
+                    dave.push((b.start, b.end));
+                }
+                s.serialize_field("acked_ranges", &dave)?;
+                s.end()
+                //write!(f, "ACK delay={} blocks={:?}", ack_delay, ranges)?;
+            },
+
+            Frame::Crypto { data } => {
+                let mut s = serializer.serialize_struct("Crypto", 3)?;
+                s.serialize_field("frame_type", "crypto")?;
+                s.serialize_field("offset", &data.off().to_string())?;
+                s.serialize_field("length", &data.len().to_string())?;
+                s.end()
+            },
+
+            Frame::ApplicationClose { error_code, reason } => {
+                let mut s = serializer.serialize_struct("ApplicationClose", 3)?;
+                s.serialize_field("frame_type", "connection_close")?;
+                s.serialize_field("error_space", "transport")?;
+                s.serialize_field("error_code", &error_code.to_string())?;
+                s.serialize_field("raw_error_code", &error_code.to_string())?;
+                s.serialize_field("reason", reason)?;
+                s.end()
+            },
+
+            Frame::Stream {stream_id, data} => {
+                let mut s = serializer.serialize_struct("Stream", 3)?;
+                s.serialize_field("frame_type", "stream")?;
+                s.serialize_field("id", &stream_id)?;
+                s.serialize_field("offset", &data.off())?;
+                s.serialize_field("length", &data.len())?;
+
+                if data.fin() {
+                    s.serialize_field("fin", "true")?;
+                }
+
+                s.end()
+            },
+
+            _ => {
+                let mut s = serializer.serialize_struct("Crypto", 1)?;
+                s.serialize_field("fuckit", "fuckit")?;
+                //s.serialize_field("length", &self.data.len())?;
+                s.end()
+            }
+        }
+
     }
 }
 
