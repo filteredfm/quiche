@@ -1,5 +1,4 @@
-// Copyright (C) 2018, Cloudflare, Inc.
-// Copyright (C) 2018, Alessandro Ghedini
+// Copyright (C) 2019, Cloudflare, Inc.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -28,441 +27,565 @@
 extern crate serde;
 extern crate serde_json;
 
-use serde::ser::{/*Serialize,*/ SerializeStruct, Serializer};
+// use serde::ser::{
+// Serialize,
+// SerializeStruct,
+// Serializer,
+// };
 
-macro_rules! enum_str {
-    ($name:ident { $($variant:ident($str:expr), )* }) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-        pub enum $name {
-            $($variant,)*
-        }
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Qlog {
+    pub qlog_version: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub summary: Option<String>,
 
-        impl ::serde::Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-                where S: ::serde::Serializer,
-            {
-                // Serialize the enum as a string.
-                serializer.serialize_str(match *self {
-                    $( $name::$variant => $str, )*
-                })
-            }
-        }
+    pub traces: Vec<Trace>,
+}
 
-        impl<'de> ::serde::Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-                where D: ::serde::Deserializer<'de>,
-            {
-                struct Visitor;
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Trace {
+    pub vantage_point: VantagePoint,
+    pub title: Option<String>,
+    pub description: Option<String>,
 
-                impl<'de> ::serde::de::Visitor<'de> for Visitor {
-                    type Value = $name;
+    pub configuration: Option<Configuration>,
 
-                    fn expecting(&self, formatter: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                        write!(formatter, "a string for {}", stringify!($name))
-                    }
+    pub common_fields: Option<CommonFields>,
+    pub event_fields: Vec<String>,
 
-                    fn visit_str<E>(self, value: &str) -> Result<$name, E>
-                        where E: ::serde::de::Error,
-                    {
-                        match value {
-                            $( $str => Ok($name::$variant), )*
-                            _ => Err(E::invalid_value(::serde::de::Unexpected::Other(
-                                &format!("unknown {} variant: {}", stringify!($name), value)
-                            ), &self)),
-                        }
-                    }
-                }
+    pub events: Vec<Vec<EventField>>,
+}
 
-                // Deserialize the enum from a string.
-                deserializer.deserialize_str(Visitor)
-            }
-        }
+impl Trace {
+    fn push_event(
+        &mut self, relative_time: String, category: EventCategory,
+        event: EventType, trigger: EventTrigger, data: EventData,
+    ) {
+        self.events.push(vec![
+            EventField::RelativeTime(relative_time),
+            EventField::Category(category),
+            EventField::Event(event),
+            EventField::Trigger(trigger),
+            EventField::Data(data),
+        ]);
+    }
+
+    pub fn push_connectivity_event(
+        &mut self, relative_time: String, event: ConnectivityEventType,
+        trigger: ConnectivityEventTrigger, data: EventData,
+    ) {
+        self.push_event(
+            relative_time,
+            EventCategory::Connectivity,
+            EventType::ConnectivityEventType(event),
+            EventTrigger::ConnectivityEventTrigger(trigger),
+            data,
+        );
+    }
+
+    pub fn push_transport_event(
+        &mut self, relative_time: String, event: TransportEventType,
+        trigger: TransportEventTrigger, data: EventData,
+    ) {
+        self.push_event(
+            relative_time,
+            EventCategory::Transport,
+            EventType::TransportEventType(event),
+            EventTrigger::TransportEventTrigger(trigger),
+            data,
+        );
+    }
+
+    pub fn push_security_event(
+        &mut self, relative_time: String, event: SecurityEventType,
+        trigger: SecurityEventTrigger, data: EventData,
+    ) {
+        self.push_event(
+            relative_time,
+            EventCategory::Security,
+            EventType::SecurityEventType(event),
+            EventTrigger::SecurityEventTrigger(trigger),
+            data,
+        );
+    }
+
+    pub fn push_recovery_event(
+        &mut self, relative_time: String, event: RecoveryEventType,
+        trigger: RecoveryEventTrigger, data: EventData,
+    ) {
+        self.push_event(
+            relative_time,
+            EventCategory::Recovery,
+            EventType::RecoveryEventType(event),
+            EventTrigger::RecoveryEventTrigger(trigger),
+            data,
+        );
     }
 }
 
-enum_str!(EventCategory {
-    Connectivity("connectivity"),
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct VantagePoint {
+    pub name: Option<String>,
 
-    Security("security"),
+    #[serde(rename = "type")]
+    pub ty: VantagePointType,
 
-    Transport("transport"),
+    pub flow: Option<VantagePointType>,
+}
 
-    Recovery("recovery"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VantagePointType {
+    Client,
+    Server,
+    Network,
+    Unknown,
+}
 
-});
+#[allow(dead_code)]
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Configuration {
+    pub time_offset: Option<String>,
+    pub time_units: Option<String>,
 
-enum_str!(ConnectivtyEventType {
-    ConnectionAttempt("connection_attempt"),
+    pub original_uris: Option<Vec<String>>,
+}
 
-    ConnectionNew("connection_new"),
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CommonFields {
+    pub group_id: Option<String>,
+    pub group_ids: Option<Vec<String>>,
+    pub protocol_type: Option<String>,
 
-    ConnectionIdUpdate("connection_id_update"),
+    pub reference_time: Option<String>,
+}
 
-    SpinBitUpdate("spin_bit_update"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum EventType {
+    ConnectivityEventType(ConnectivityEventType),
 
-    ConnectionClose("connection_close"),
+    TransportEventType(TransportEventType),
 
-});
+    SecurityEventType(SecurityEventType),
 
-enum_str!(ConnectivityEventTrigger {
-    Line("line"),
-});
+    RecoveryEventType(RecoveryEventType),
 
-enum_str!(TransportEventType {
-    DatagramSent("datagram_sent"),
+    Http3EventType(Http3EventType),
+}
 
-    DatagramReceived("datagram_received"),
+#[derive(Debug)]
+pub enum FunnyField {
+    A(X),
+    B(Y),
+    C(Z),
+}
 
-    PacketSent("packet_sent"),
+#[derive(Debug)]
+pub enum A {
+    Alpha(X),
+    Beta(X),
+}
 
-    PacketReceived("packet_received"),
+#[derive(Debug)]
+pub enum B {
+    Delta(Y),
+    Gamma(Y),
+}
 
-    PacketDropped("packet_dropped"),
+#[derive(Debug)]
+pub enum C {
+    Epsilon(Z),
+    Zeta(Z),
+}
 
-    PacketBuffered("packet_buffered"),
+#[derive(Debug)]
+pub enum X {
+    Up(String),
+    Down(String),
+}
 
-    StreamStateUpdate("stream_state_update"),
+#[derive(Debug)]
+pub enum Y {
+    Charm(u8),
+    Strange(u8),
+}
 
-    FlowControlUpdate("flow_control_update"),
+#[derive(Debug)]
+pub enum Z {
+    Top(u16),
+    Bottom(u16),
+}
 
-    VersionUpdate("version_update"),
+#[allow(dead_code)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum EventTrigger {
+    ConnectivityEventTrigger(ConnectivityEventTrigger),
 
-    TransportParametersUpdate("transport_parameter_update"),
+    TransportEventTrigger(TransportEventTrigger),
 
-    AlpnUpdate("ALPN_update"),
-});
+    SecurityEventTrigger(SecurityEventTrigger),
 
-enum_str!(TransportEventTrigger {
-    Line("line"),
+    RecoveryEventTrigger(RecoveryEventTrigger),
+}
 
-    Retransmit("retransmit"),
+#[allow(dead_code)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum EventField {
+    RelativeTime(String),
 
-    KeysUnavailable("keys_unavailable"),
-});
+    Category(EventCategory),
 
-enum_str!(SecurityEventType {
-    CipherUpdate("cipher_update"),
+    Event(EventType),
 
-    KeyUpdate("key_update"),
+    Trigger(EventTrigger),
 
-    KeyRetire("key_retire"),
-});
+    Data(EventData),
+}
 
-enum_str!(SecurityEventTrigger {
-    Tls("tls"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventCategory {
+    Connectivity,
+    Security,
+    Transport,
+    Recovery,
+}
 
-    Implicit("implicit"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectivityEventType {
+    ConnectionAttempt,
+    ConnectionNew,
+    ConnectionIdUpdate,
+    SpinBitUpdate,
+    ConnectionClose,
+}
 
-    RemoteUpdate("remote_update"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectivityEventTrigger {
+    Line,
+}
 
-    LocalUpdate("local_update"),
-});
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportEventType {
+    DatagramSent,
+    DatagramReceived,
+    PacketSent,
+    PacketReceived,
+    PacketDropped,
+    PacketBuffered,
+    StreamStateUpdate,
+    FlowControlUpdate,
+    VersionUpdate,
+    TransportParametersUpdate,
+    AlpnUpdate,
+}
 
-enum_str!(RecoveryEventType {
-    StateUpdate("state_update"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportEventTrigger {
+    Line,
+    Retransmit,
+    KeysUnavailable,
+}
 
-    MetricUpdate("metric_update"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityEventType {
+    CipherUpdate,
+    KeyUpdate,
+    KeyRetire,
+}
 
-    LossAlarmSet("loss_alarm_set"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityEventTrigger {
+    Tls,
+    Implicit,
+    RemoteUpdate,
+    LocalUpdate,
+}
 
-    LossAlarmTriggered("loss_alarm_triggered"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryEventType {
+    StateUpdate,
+    MetricUpdate,
+    LossAlarmSet,
+    LossAlarmTriggered,
+    PacketLost,
+    PacketAcknowledged,
+    PacketRetransmit,
+}
 
-    PacketLost("packet_lost"),
-
-    PacketAcknowledged("packet_acknowledged"),
-
-    PacketRetransmit("packet_retransmit"),
-});
-
-enum_str!(RecoveryEventTrigger {
-    AckReceived("ack_received"),
-
-    PacketSent("packet_sent"),
-
-    Alarm("alarm"),
-
-    Unknown("unknown"),
-});
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryEventTrigger {
+    AckReceived,
+    PacketSent,
+    Alarm,
+    Unknown,
+}
 
 // ================================================================== //
 
-enum_str!(KeyType {
-    ServerInitialSecret("server_initial_secret"),
-
-    ClientInitialSecret("client_initial_secret"),
-
-    ServerHandshakeSecret("server_handhshake_secret"),
-
-    ClientHandshakeSecret("client_handshake_secret"),
-
-    Server0RttSecret("server_0rtt_secret"),
-
-    Client0RttSecret("client_0rtt_secret"),
-
-    Server1RttSecret("server_1rtt_secret"),
-
-    Client1RttSecret("client_1rtt_secret"),
-});
-
-// ================================================================== //
-// CONNECTIVITY
-
-pub struct EventListening {
-    ip: String,
-    port: u64,
-    quic_versions: Option<Vec<String>>,
-    alpn_values: Option<Vec<String>>
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyType {
+    ServerInitialSecret,
+    ClientInitialSecret,
+    ServerHandshakeSecret,
+    ClientHandshakeSecret,
+    Server0RttSecret,
+    Client0RttSecret,
+    Server1RttSecret,
+    Client1RttSecret,
 }
 
-pub struct EventConnectionNew {
-    ip_verison: String,
-    src_ip: String,
-    dst_ip: String,
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum EventData {
+    // ================================================================== //
+    // CONNECTIVITY
+    Listening {
+        ip: String,
+        port: u64,
 
-    transport_protocol: Option<String>,
-    src_port: u64,
-    dst_port: u64,
+        quic_versions: Option<Vec<String>>,
+        alpn_values: Option<Vec<String>>,
+    },
 
-    quic_version: Option<String>,
-    src_cid: Option<String>,
-    dst_cid: Option<String>
+    ConnectionNew {
+        ip_verison: String,
+        src_ip: String,
+        dst_ip: String,
+
+        transport_protocol: Option<String>,
+        src_port: u64,
+        dst_port: u64,
+
+        quic_version: Option<String>,
+        src_cid: Option<String>,
+        dst_cid: Option<String>,
+    },
+
+    ConnectionIdUpdate {
+        src_old: Option<String>,
+        src_new: Option<String>,
+
+        dst_old: Option<String>,
+        dst_new: Option<String>,
+    },
+
+    SpinBitUpdate {
+        state: bool,
+    },
+
+    ConnectionClose {
+        src_id: String,
+    },
+
+    // ================================================================== //
+    // SECURITY
+    CipherUpdate {
+        cipher_type: String,
+    },
+
+    KeyRetire {
+        key_type: KeyType,
+        key: String,
+        generation: Option<String>,
+    },
+
+    KeyUpdate {
+        key_type: KeyType,
+        old: Option<String>,
+        new: String,
+        generation: Option<String>,
+    },
+
+    // ================================================================== //
+    // TRANSPORT
+    DatagramReceived {
+        count: Option<u64>,
+        byte_length: u64,
+    },
+
+    DatagramSent {
+        count: Option<u64>,
+        byte_length: u64,
+    },
+
+    PacketReceived {
+        raw_encrypted: Option<String>,
+
+        packet_type: PacketType,
+        header: Option<PacketHeader>,
+        frames: Option<Vec<QuicFrame>>,
+    },
+
+    PacketSent {
+        raw_encrypted: Option<String>,
+
+        packet_type: PacketType,
+        header: Option<PacketHeader>,
+        frames: Option<Vec<QuicFrame>>,
+    },
+
+    PacketBuffered {
+        packet_type: PacketType,
+        packet_number: String,
+    },
+
+    VersionUpdate {
+        old: String,
+        new: String,
+    },
+
+    // ================================================================== //
+    // RECOVERY
+    MetricUpdate {
+        cwnd: Option<u64>,
+        bytes_in_flight: Option<u64>,
+
+        min_rtt: Option<u64>,
+        smoothed_rtt: Option<u64>,
+        latest_rtt: Option<u64>,
+        max_ack_delay: Option<u64>,
+
+        rtt_variance: Option<u64>,
+        ssthresh: Option<u64>,
+
+        pacing_rate: Option<u64>,
+    },
+
+    PacketLost {
+        packet_type: PacketType,
+        packet_number: String,
+
+        header: Option<PacketHeader>,
+        frames: Vec<QuicFrame>,
+    },
+
+    // ================================================================== //
+    // HTTP/3
+    H3FrameCreated {
+        stream_id: String,
+        frame: Http3Frame,
+        byte_length: String,
+
+        raw: Option<String>,
+    },
+
+    H3FrameParsed {
+        stream_id: String,
+        frame: Http3Frame,
+        byte_length: String,
+
+        raw: Option<String>,
+    },
+
+    H3DataMoved {
+        stream_id: String,
+        offset_start: String,
+        offset_end: String,
+
+        recipient: String,
+    },
+
+    H3DataReceived {
+        stream_id: String,
+        offset_start: String,
+        offset_end: String,
+
+        source: String,
+    },
 }
 
-pub struct EventConnectionIdUpdate {
-    src_old: Option<String>,
-    src_new: Option<String>,
-
-    dst_old: Option<String>,
-    dst_new: Option<String>,
-}
-
-pub struct EventSpinBitUpdate {
-    state: bool
-}
-
-pub struct EventConnectionClose {
-    src_id: String,
-}
-
-// ================================================================== //
-// SECURITY
-
-pub struct EventCipherUpdate {
-    cipher_type: String,
-}
-
-pub struct EventKeyRetire {
-    key_type: KeyType,
-    key: String,
-    generation: Option<String>
-}
-
-pub struct EventKeyUpdate {
-    key_type: KeyType,
-    old: Option<String>,
-    new: String,
-    generation: Option<String>
-}
-
-// ================================================================== //
-// TRANSPORT
-
-pub struct EventDatagramReceived {
-    count: Option<u64>,
-    byte_length: u64
-}
-
-pub struct EventDatagramSent {
-    count: Option<u64>,
-    byte_length: u64
-}
-
-pub struct EventPacketReceived {
-    raw_encrypted: Option<String>,
-
-    packet_type: PacketType,
-    header: Option<PacketHeader>,
-    frames:  Option<Vec<QuicFrame>>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct EventPacketSent {
-    pub raw_encrypted: Option<String>,
-
-    pub packet_type: PacketType,
-    pub header: Option<PacketHeader>,
-    pub frames: Option<Vec<QuicFrame>>,
-}
-
-impl serde::Serialize for EventPacketSent {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("EventPacketSent", 4)?;
-        if let Some(raw_encrypted) = &self.raw_encrypted {
-            s.serialize_field("raw_encrypted", &format!("{}", raw_encrypted))?;
-        }
-
-        s.serialize_field("packet_type", &serde_json::to_string(&self.packet_type).unwrap())?;
-
-        if let Some(header) = &self.header {
-            s.serialize_field("header", &serde_json::to_string(&header).unwrap())?;
-        }
-
-        if let Some(frames) = &self.frames {
-            s.serialize_field("frames", &serde_json::to_string(&frames).unwrap())?;
-        }
-
-        s.end()
-    }
-}
-
-pub struct EventPacketBuffered {
-    packet_type: PacketType,
-    packet_number: String
-}
-
-pub struct EventVersionUpdate {
-    old: String,
-    new: String
-}
-
+#[allow(dead_code)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct AlpnUpdate {
     old: String,
-    new: String
+    new: String,
 }
 
-enum_str!(PacketType {
-    Initial("initial"),
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PacketType {
+    Initial,
+    Handshake,
 
-    Handshake("handshake"),
+    #[serde(rename = "0RTT")]
+    ZeroRtt,
 
-    ZeroRtt("0RTT"),
+    #[serde(rename = "1RTT")]
+    OneRtt,
 
-    OneRtt("1RTT"),
-
-    Retry("retry"),
-
-    VersionNegotiation("version_negotiation"),
-
-    Unknown("unknown"),
-});
-
-// ================================================================== //
-// RECOVERY
-
-pub struct EventMetricUpdate {
-    cwnd: Option<u64>,
-    bytes_in_flight: Option<u64>,
-
-    min_rtt: Option<u64>,
-    smoothed_rtt: Option<u64>,
-    latest_rtt: Option<u64>,
-    max_ack_delay: Option<u64>,
-
-    rtt_variance: Option<u64>,
-    ssthresh: Option<u64>,
-
-    pacing_rate: Option<u64>,
+    Retry,
+    VersionNegotiation,
+    Unknown,
 }
 
-pub struct EventPacketLost {
-    packet_type: PacketType,
-    packet_number: String,
-
-    header: Option<PacketHeader>,
-    frames: Vec<QuicFrame>,
-}
-
-// ================================================================== //
-// HTTP/3
-
-enum_str!(HTTP3EventType {
-    StreamStateUpdate("stream_state_update"),
-
-    StreamTypeUpdate("stream_type_update"),
-
-    FrameCreated("frame_created"),
-
-    FrameParsed("frame_parsed"),
-
-    DataMoved("data_moved"),
-
-    DatagramReceived("data_received"),
-});
-
-pub struct EventH3FrameCreated {
-    stream_id: String,
-    frame: Http3Frame,
-    byte_length: String,
-
-    raw: Option<String>
-}
-
-pub struct EventH3FrameParsed {
-    stream_id: String,
-    frame: Http3Frame,
-    byte_length: String,
-
-    raw: Option<String>
-}
-
-pub struct EventH3DataMoved {
-    stream_id: String,
-    offset_start: String,
-    offset_end: String,
-
-    recipient: String
-}
-
-pub struct EventH3DataReceived {
-    stream_id: String,
-    offset_start: String,
-    offset_end: String,
-
-    source: String
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3EventType {
+    StreamStateUpdate,
+    StreamTypeUpdate,
+    FrameCreated,
+    FrameParsed,
+    DataMoved,
+    DatagramReceived,
 }
 
 // ================================================================== //
 // Based on QUIC draft-22
 // ================================================================== //
 
-enum_str!(QuicFrameTypeName {
-    Padding("padding"),
-
-    Ping("ping"),
-
-    Ack("ack"),
-
-    ResetStream("reset_stream"),
-
-    StopSending("stop_sending"),
-    Crypto("crypto"),
-    NewToken("new_token"),
-    Stream("stream"),
-    MaxData("max_data"),
-    MaxStreamData("max_stream_data"),
-    MaxStreams("max_streams"),
-    DataBlocked("data_blocked"),
-    StreamDataBlocked("stream_data_blocked"),
-    StreamsBlocked("streams_blocked"),
-    NewConnectionId("new_connection_id"),
-    RetireConnectionId("retire_connection_id"),
-    PathChallenge("path_challenge"),
-    PathResponse("path_response"),
-    ConnectionClose("connection_close"),
-    ApplicationClose("application_close"),
-    UnknownFrameType("unkown_frame_type"),
-});
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuicFrameTypeName {
+    Padding,
+    Ping,
+    Ack,
+    ResetStream,
+    StopSending,
+    Crypto,
+    NewToken,
+    Stream,
+    MaxData,
+    MaxStreamData,
+    MaxStreams,
+    DataBlocked,
+    StreamDataBlocked,
+    StreamsBlocked,
+    NewConnectionId,
+    RetireConnectionId,
+    PathChallenge,
+    PathResponse,
+    ConnectionClose,
+    ApplicationClose,
+    Unknown,
+}
 
 // TODO: search for pub enum Error { to see how best to encode errors in qlog.
+#[serde_with::skip_serializing_none]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct PacketHeader {
     pub packet_number: String,
     pub packet_size: Option<u64>,
     pub payload_length: Option<u64>,
-
     pub version: Option<String>,
     pub scil: Option<String>,
     pub dcil: Option<String>,
@@ -470,17 +593,23 @@ pub struct PacketHeader {
     pub dcid: Option<String>,
 }
 
-enum_str!(StreamType {
-    Bidirectional("bidirectional"),
-    Unidirectional("unidirectional"),
-});
-
-enum_str!(ErrorSpace {
-    TransportError("transport_error"),
-    ApplicationError("application_error"),
-});
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamType {
+    Bidirectional,
+    Unidirectional,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSpace {
+    TransportError,
+    ApplicationError,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum QuicFrame {
     Padding {
         frame_type: QuicFrameTypeName,
@@ -493,17 +622,20 @@ pub enum QuicFrame {
     Ack {
         frame_type: QuicFrameTypeName,
         ack_delay: String,
-        acked_ranges: Vec<(u64,u64)>,
+        acked_ranges: Vec<(u64, u64)>,
+
         ect1: Option<String>,
+
         ect0: Option<String>,
-        ce: Option<String>
+
+        ce: Option<String>,
     },
 
     ResetStream {
         frame_type: QuicFrameTypeName,
         id: String,
         error_code: u64,
-        final_size: String
+        final_size: String,
     },
 
     StopSending {
@@ -530,6 +662,7 @@ pub enum QuicFrame {
         offset: String,
         length: String,
         fin: bool,
+
         raw: Option<String>,
     },
 
@@ -550,7 +683,7 @@ pub enum QuicFrame {
         maximum: String,
     },
 
-    Blocked {
+    DataBlocked {
         frame_type: QuicFrameTypeName,
         limit: String,
     },
@@ -573,7 +706,7 @@ pub enum QuicFrame {
         retire_prior_to: String,
         length: u64,
         connection_id: String,
-        reset_token: String
+        reset_token: String,
     },
 
     RetireConnectionId {
@@ -583,11 +716,13 @@ pub enum QuicFrame {
 
     PathChallenge {
         frame_type: QuicFrameTypeName,
+
         data: Option<String>,
     },
 
     PathResponse {
         frame_type: QuicFrameTypeName,
+
         data: Option<String>,
     },
 
@@ -598,81 +733,325 @@ pub enum QuicFrame {
         raw_error_code: u64,
         reason: String,
 
-        trigger_frame_type: Option<u64>
+        trigger_frame_type: Option<u64>,
     },
 
     Unknown {
         frame_type: QuicFrameTypeName,
-        raw_frame_type: u64
+        raw_frame_type: u64,
+    },
+}
+
+impl QuicFrame {
+    pub fn padding() -> Self {
+        QuicFrame::Padding {
+            frame_type: QuicFrameTypeName::Padding,
+        }
+    }
+
+    pub fn ping() -> Self {
+        QuicFrame::Ping {
+            frame_type: QuicFrameTypeName::Ping,
+        }
+    }
+
+    pub fn ack(
+        ack_delay: String, acked_ranges: Vec<(u64, u64)>, ect1: Option<String>,
+        ect0: Option<String>, ce: Option<String>,
+    ) -> Self {
+        QuicFrame::Ack {
+            frame_type: QuicFrameTypeName::Ack,
+            ack_delay,
+            acked_ranges,
+            ect1,
+            ect0,
+            ce,
+        }
+    }
+
+    pub fn reset_stream(id: String, error_code: u64, final_size: String) -> Self {
+        QuicFrame::ResetStream {
+            frame_type: QuicFrameTypeName::ResetStream,
+            id,
+            error_code,
+            final_size,
+        }
+    }
+
+    pub fn stop_sending(id: String, error_code: u64) -> Self {
+        QuicFrame::StopSending {
+            frame_type: QuicFrameTypeName::StopSending,
+            id,
+            error_code,
+        }
+    }
+
+    pub fn crypto(offset: String, length: String) -> Self {
+        QuicFrame::Crypto {
+            frame_type: QuicFrameTypeName::Crypto,
+            offset,
+            length,
+        }
+    }
+
+    pub fn new_token(length: String, token: String) -> Self {
+        QuicFrame::NewToken {
+            frame_type: QuicFrameTypeName::NewToken,
+            length,
+            token,
+        }
+    }
+
+    pub fn stream(
+        id: String, offset: String, length: String, fin: bool,
+        raw: Option<String>,
+    ) -> Self {
+        QuicFrame::Stream {
+            frame_type: QuicFrameTypeName::Stream,
+            id,
+            offset,
+            length,
+            fin,
+            raw,
+        }
+    }
+
+    pub fn max_data(maximum: String) -> Self {
+        QuicFrame::MaxData {
+            frame_type: QuicFrameTypeName::MaxData,
+            maximum,
+        }
+    }
+
+    pub fn max_stream_data(id: String, maximum: String) -> Self {
+        QuicFrame::MaxStreamData {
+            frame_type: QuicFrameTypeName::MaxStreamData,
+            id,
+            maximum,
+        }
+    }
+
+    pub fn max_streams(stream_type: StreamType, maximum: String) -> Self {
+        QuicFrame::MaxStreams {
+            frame_type: QuicFrameTypeName::MaxStreams,
+            stream_type,
+            maximum,
+        }
+    }
+
+    pub fn data_blocked(limit: String) -> Self {
+        QuicFrame::DataBlocked {
+            frame_type: QuicFrameTypeName::DataBlocked,
+            limit,
+        }
+    }
+
+    pub fn stream_data_blocked(id: String, limit: String) -> Self {
+        QuicFrame::StreamDataBlocked {
+            frame_type: QuicFrameTypeName::StreamDataBlocked,
+            id,
+            limit,
+        }
+    }
+
+    pub fn streams_blocked(stream_type: StreamType, limit: String) -> Self {
+        QuicFrame::StreamsBlocked {
+            frame_type: QuicFrameTypeName::StreamsBlocked,
+            stream_type,
+            limit,
+        }
+    }
+
+    pub fn new_connection_id(
+        sequence_number: String, retire_prior_to: String, length: u64,
+        connection_id: String, reset_token: String,
+    ) -> Self {
+        QuicFrame::NewConnectionId {
+            frame_type: QuicFrameTypeName::NewConnectionId,
+            sequence_number,
+            retire_prior_to,
+            length,
+            connection_id,
+            reset_token,
+        }
+    }
+
+    pub fn retire_connection_id(sequence_number: String) -> Self {
+        QuicFrame::RetireConnectionId {
+            frame_type: QuicFrameTypeName::RetireConnectionId,
+            sequence_number,
+        }
+    }
+
+    pub fn path_challenge(data: Option<String>) -> Self {
+        QuicFrame::PathChallenge {
+            frame_type: QuicFrameTypeName::PathChallenge,
+            data,
+        }
+    }
+
+    pub fn path_response(data: Option<String>) -> Self {
+        QuicFrame::PathResponse {
+            frame_type: QuicFrameTypeName::PathResponse,
+            data,
+        }
+    }
+
+    pub fn connection_close(
+        error_space: ErrorSpace, error_code: u64, raw_error_code: u64,
+        reason: String, trigger_frame_type: Option<u64>,
+    ) -> Self {
+        QuicFrame::ConnectionClose {
+            frame_type: QuicFrameTypeName::ConnectionClose,
+            error_space,
+            error_code,
+            raw_error_code,
+            reason,
+            trigger_frame_type,
+        }
+    }
+
+    pub fn unknown(raw_frame_type: u64) -> Self {
+        QuicFrame::Unknown {
+            frame_type: QuicFrameTypeName::Unknown,
+            raw_frame_type,
+        }
     }
 }
 
 // ================================================================== //
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3FrameTypeName {
+    Data,
+    Headers,
+    CancelPush,
+    Settings,
+    PushPromise,
+    Goaway,
+    MaxPushId,
+    DuplicatePush,
+    Reserved,
+    Unknown,
+}
 
-enum_str!(HTTP3FrameTypeName {
-    Data("data"),
-
-    Headers("headers"),
-
-    CancelPush("cencel_push"),
-
-    Settings("settings"),
-
-    PushPromise("push_promise"),
-    Goaway("goaway"),
-    MaxPushId("max_push_id"),
-    DuplicatePush("duplicate_push"),
-    Reserved("Reserved"),
-    Unknown("unknown"),
-});
-
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct HttpHeader {
     name: String,
     content: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Setting {
     name: String,
     content: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Http3Frame {
     Data {
-        frame_type: HTTP3FrameTypeName,
+        frame_type: Http3FrameTypeName,
     },
 
     Headers {
-        frame_type: HTTP3FrameTypeName,
+        frame_type: Http3FrameTypeName,
         fields: Vec<HttpHeader>,
     },
 
     CancelPush {
-        frame_type: HTTP3FrameTypeName,
-        id: String
+        frame_type: Http3FrameTypeName,
+        id: String,
     },
 
     Settings {
-        frame_type: HTTP3FrameTypeName,
-        fields: Vec<Setting>
+        frame_type: Http3FrameTypeName,
+        fields: Vec<Setting>,
     },
 
     PushPromise {
-        frame_type: HTTP3FrameTypeName,
+        frame_type: Http3FrameTypeName,
         id: String,
         fields: Vec<HttpHeader>,
     },
 
-    GoAway {
-        frame_type: HTTP3FrameTypeName,
+    Goaway {
+        frame_type: Http3FrameTypeName,
         id: String,
     },
 
     MaxPushId {
-        frame_type: HTTP3FrameTypeName,
+        frame_type: Http3FrameTypeName,
         id: String,
     },
 
     Reserved {
-        frame_type: HTTP3FrameTypeName,
+        frame_type: Http3FrameTypeName,
     },
+
+    Unknown {
+        frame_type: Http3FrameTypeName,
+    },
+}
+
+impl Http3Frame {
+    fn data() -> Self {
+        Http3Frame::Data {
+            frame_type: Http3FrameTypeName::Data,
+        }
+    }
+
+    fn headers(fields: Vec<HttpHeader>) -> Self {
+        Http3Frame::Headers {
+            frame_type: Http3FrameTypeName::Headers,
+            fields,
+        }
+    }
+
+    fn cancel_push(id: String) -> Self {
+        Http3Frame::CancelPush {
+            frame_type: Http3FrameTypeName::CancelPush,
+            id,
+        }
+    }
+
+    fn settings(fields: Vec<Setting>) -> Self {
+        Http3Frame::Settings {
+            frame_type: Http3FrameTypeName::Settings,
+            fields,
+        }
+    }
+
+    fn push_promise(id: String, fields: Vec<HttpHeader>) -> Self {
+        Http3Frame::PushPromise {
+            frame_type: Http3FrameTypeName::PushPromise,
+            id,
+            fields,
+        }
+    }
+
+    fn goaway(id: String) -> Self {
+        Http3Frame::Goaway {
+            frame_type: Http3FrameTypeName::Goaway,
+            id,
+        }
+    }
+
+    fn max_push_id(id: String) -> Self {
+        Http3Frame::MaxPushId {
+            frame_type: Http3FrameTypeName::MaxPushId,
+            id,
+        }
+    }
+
+    fn reserved() -> Self {
+        Http3Frame::Reserved {
+            frame_type: Http3FrameTypeName::Reserved,
+        }
+    }
+
+    fn unknown() -> Self {
+        Http3Frame::Unknown {
+            frame_type: Http3FrameTypeName::Unknown,
+        }
+    }
 }

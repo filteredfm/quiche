@@ -693,6 +693,10 @@ pub struct Connection {
 
     /// Whether to send GREASE.
     grease: bool,
+
+    qlog_start_time: std::time::Instant,
+
+    pub qlog_trace: qlog::Trace,
 }
 
 /// Creates a new server-side connection.
@@ -859,6 +863,12 @@ impl Connection {
         let scid_as_hex: Vec<String> =
             scid.iter().map(|b| format!("{:02x}", b)).collect();
 
+        let qlog_vp_type = if is_server {
+            qlog::VantagePointType::Server
+        } else {
+            qlog::VantagePointType::Client
+        };
+
         let mut conn = Box::new(Connection {
             version: config.version,
 
@@ -938,6 +948,32 @@ impl Connection {
             closed: false,
 
             grease: config.grease,
+
+            qlog_start_time: std::time::Instant::now(),
+
+            qlog_trace: qlog::Trace {
+                vantage_point: qlog::VantagePoint {
+                    name: None,
+                    ty: qlog_vp_type,
+                    flow: None,
+                },
+                title: Some("Quiche qlog trace".to_string()),
+                description: Some("Quiche qlog trace description".to_string()),
+                configuration: Some(qlog::Configuration {
+                    time_offset: Some("0".to_string()),
+                    time_units: Some("ms".to_string()),
+                    original_uris: None,
+                }),
+                common_fields: None,
+                event_fields: vec![
+                    "relative_time".to_string(),
+                    "category".to_string(),
+                    "event".to_string(),
+                    "trigger".to_string(),
+                    "data".to_string(),
+                ], // TODO: hack
+                events: Vec::new(), // vec![vec![rt, cat, ev, trigger, data]],
+            },
         });
 
         if let Some(odcid) = odcid {
@@ -1845,17 +1881,55 @@ impl Connection {
             pn
         );
 
+        let mut qlog_frames = Vec::new();
+
         // Encode frames into the output packet.
         for frame in &frames {
             trace!("{} tx frm {:?}", self.trace_id, frame);
 
             frame.to_bytes(&mut b)?;
+            qlog_frames.push(frame.to_qlog()?);
         }
 
-        //let jay = serde_json::json!({"k": "v"});
+        let qlog_pkt_hdr = qlog::PacketHeader {
+            packet_number: pn.to_string(),
+            packet_size: None,
+            payload_length: Some(payload_len as u64),
+            version: Some(format!("{:x?}", hdr.version)),
+            scil: Some(hdr.scid.len().to_string()),
+            dcil: Some(hdr.dcid.len().to_string()),
+            scid: Some(format!("{}", HexSlice::new(&hdr.scid))),
+            dcid: Some(format!("{}", HexSlice::new(&hdr.dcid))),
+        };
 
-        trace!("{}", serde_json::to_string(&hdr).unwrap());
-        trace!("\"frames\": {}", serde_json::to_string(&frames).unwrap());
+        let qlog_pkt_ty = match hdr.ty {
+            Type::Initial => qlog::PacketType::Initial,
+
+            Type::Retry => qlog::PacketType::Retry,
+
+            Type::Handshake => qlog::PacketType::Handshake,
+
+            Type::ZeroRTT => qlog::PacketType::ZeroRtt,
+
+            Type::VersionNegotiation => qlog::PacketType::VersionNegotiation,
+
+            Type::Short => qlog::PacketType::OneRtt,
+        };
+
+        self.qlog_trace.push_transport_event(
+            self.qlog_start_time.elapsed().as_millis().to_string(),
+            qlog::TransportEventType::PacketSent,
+            qlog::TransportEventTrigger::Line,
+            qlog::EventData::PacketSent {
+                raw_encrypted: None,
+                packet_type: qlog_pkt_ty,
+                header: Some(qlog_pkt_hdr),
+                frames: Some(qlog_frames),
+            },
+        );
+
+        // trace!("{}", serde_json::to_string(&self.qlog_trace).unwrap());
+        // info!("{}", serde_json::to_string(&qlog_frames).unwrap());
 
         let aead = match self.pkt_num_spaces[epoch].crypto_seal {
             Some(ref v) => v,
@@ -3297,6 +3371,28 @@ pub mod testing {
     }
 }
 
+struct HexSlice<'a>(&'a [u8]);
+
+impl<'a> HexSlice<'a> {
+    fn new<T>(data: &'a T) -> HexSlice<'a>
+    where
+        T: ?Sized + AsRef<[u8]> + 'a,
+    {
+        HexSlice(data.as_ref())
+    }
+}
+
+// You can even choose to implement multiple traits, like Lower and UpperHex
+impl<'a> std::fmt::Display for HexSlice<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for byte in self.0 {
+            // Decide if you want to pad out the value here
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4401,10 +4497,10 @@ mod frame;
 pub mod h3;
 mod octets;
 mod packet;
+#[doc(hidden)]
+pub mod qlog;
 mod rand;
 mod ranges;
 mod recovery;
 mod stream;
 mod tls;
-#[doc(hidden)]
-pub mod qlog;

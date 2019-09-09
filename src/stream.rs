@@ -33,7 +33,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
-use serde::ser::{Serialize, SerializeStruct/*, Serializer*/};
+use serde::ser::{
+    Serialize,
+    SerializeStruct, // , Serializer
+};
 
 use crate::Error;
 use crate::Result;

@@ -31,7 +31,9 @@ use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::collections::Bound;
 
-#[derive(Clone, Default, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Default, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct RangeSet {
     inner: BTreeMap<u64, u64>,
 }

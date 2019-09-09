@@ -36,7 +36,11 @@ use crate::rand;
 use crate::ranges;
 use crate::stream;
 
-use serde::ser::{/*Serialize,*/ SerializeStruct, Serializer};
+use serde::ser::{
+    // Serialize,
+    SerializeStruct,
+    Serializer,
+};
 
 const FORM_BIT: u8 = 0x80;
 const FIXED_BIT: u8 = 0x40;
@@ -410,7 +414,8 @@ struct HexSlice<'a>(&'a [u8]);
 
 impl<'a> HexSlice<'a> {
     fn new<T>(data: &'a T) -> HexSlice<'a>
-        where T: ?Sized + AsRef<[u8]> + 'a
+    where
+        T: ?Sized + AsRef<[u8]> + 'a,
     {
         HexSlice(data.as_ref())
     }
@@ -433,7 +438,7 @@ impl serde::Serialize for Header {
         S: Serializer,
     {
         let mut s = serializer.serialize_struct("Packet", 1)?;
-        //s.serialize_field("packet_type", self.ty)?;
+        // s.serialize_field("packet_type", self.ty)?;
         s.serialize_field("version", &format!("{:x?}", self.version))?;
         s.serialize_field("scid", &format!("{}", HexSlice::new(&self.scid)))?;
         s.serialize_field("dcid", &format!("{}", HexSlice::new(&self.dcid)))?;
