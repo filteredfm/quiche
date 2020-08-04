@@ -31,6 +31,7 @@ use std::convert::TryFrom;
 use std::net;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use ring::rand::*;
 
@@ -182,6 +183,7 @@ fn main() {
     let mut clients = ClientMap::new();
 
     let mut qt_streams = WebTransportStreamMap::new();
+    let mut qt_streams_complete = HashSet::new();
 
     let mut next_uni_stream_id = 3;
 
@@ -448,18 +450,34 @@ fn main() {
                     while let Ok((read, fin)) =
                         client.conn.stream_recv(s, &mut buf)
                     {
+
                         debug!(
-                            "{} received {} bytes",
+                            "{} received {} bytes on stream {}",
                             client.conn.trace_id(),
-                            read
+                            read,
+                            s
                         );
+
+                        if qt_streams_complete.contains(&s) {
+                            return;
+                        }
 
                         let qt_stream_data =
                             qt_streams.entry(s).or_insert(Vec::new());
-                        qt_stream_data.extend_from_slice(&buf[..read]);
+
 
                         trace!(
                             "{} steam {} has {} bytes total",
+                            client.conn.trace_id(),
+                            s,
+                            qt_stream_data.len()
+                        );
+
+
+                        qt_stream_data.extend_from_slice(&buf[..read]);
+
+                        trace!(
+                            "{} steam {} now has {} bytes total",
                             client.conn.trace_id(),
                             s,
                             qt_stream_data.len()
@@ -497,7 +515,8 @@ fn main() {
                                     .stream_send(stream_id, len.as_bytes(), true)
                                     .unwrap();
 
-                                // panic!("dsff");
+                                qt_streams_complete.insert(s);
+
                             }
                         }
                     }
