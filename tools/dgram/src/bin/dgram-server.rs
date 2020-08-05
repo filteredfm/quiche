@@ -64,17 +64,23 @@ Options:
   -h --help                   Show this screen.
 ";
 
+type WebTransportStreamMap = HashMap<u64, Vec<u8>>;
+
 struct Client {
     conn: std::pin::Pin<Box<quiche::Connection>>,
 
     http3_conn: Option<quiche::h3::Connection>,
 
     quictransport_conn: Option<()>,
+
+    qt_streams: WebTransportStreamMap,
+    qt_streams_complete: HashSet<u64>,
+
+    next_uni_stream_id: u64
 }
 
 type ClientMap = HashMap<Vec<u8>, (net::SocketAddr, Client)>;
 
-type WebTransportStreamMap = HashMap<u64, Vec<u8>>;
 
 fn main() {
     let mut buf = [0; 65535];
@@ -182,11 +188,6 @@ fn main() {
 
     let mut clients = ClientMap::new();
 
-    let mut qt_streams = WebTransportStreamMap::new();
-    let mut qt_streams_complete = HashSet::new();
-
-    let mut next_uni_stream_id = 3;
-
     loop {
         // Find the shorter timeout from all the active connections.
         //
@@ -254,7 +255,7 @@ fn main() {
             {
                 if hdr.ty != quiche::Type::Initial {
                     error!("Packet is not Initial");
-                    continue;
+                    continue 'read;
                 }
 
                 if !quiche::version_is_supported(hdr.version) {
@@ -274,7 +275,7 @@ fn main() {
 
                         panic!("send() failed: {:?}", e);
                     }
-                    continue;
+                    continue 'read;
                 }
 
                 let mut scid = [0; quiche::MAX_CONN_ID_LEN];
@@ -301,6 +302,7 @@ fn main() {
                             &mut out,
                         )
                         .unwrap();
+
                         let out = &out[..len];
 
                         if let Err(e) = socket.send_to(out, &src) {
@@ -311,7 +313,7 @@ fn main() {
 
                             panic!("send() failed: {:?}", e);
                         }
-                        continue;
+                        continue 'read;
                     }
 
                     odcid = validate_token(&src, token);
@@ -345,6 +347,9 @@ fn main() {
                     conn,
                     http3_conn: None,
                     quictransport_conn: None,
+                    qt_streams: WebTransportStreamMap::new(),
+                    qt_streams_complete: HashSet::new(),
+                    next_uni_stream_id: 3
                 };
 
                 clients.insert(scid.to_vec(), (src, client));
@@ -362,14 +367,9 @@ fn main() {
             let read = match client.conn.recv(pkt_buf) {
                 Ok(v) => v,
 
-                Err(quiche::Error::Done) => {
-                    trace!("{} done reading", client.conn.trace_id());
-                    break;
-                },
-
                 Err(e) => {
                     error!("{} recv failed: {:?}", client.conn.trace_id(), e);
-                    break 'read;
+                    continue 'read;
                 },
             };
 
@@ -401,7 +401,7 @@ fn main() {
                                 Err(e) => panic!("error closing conn: {:?}", e),
                             }
 
-                            break;
+                            continue 'read;
                         }
 
                         match client
@@ -412,7 +412,7 @@ fn main() {
 
                             Err(e) => {
                                 error!("failed to send request {:?}", e);
-                                break;
+                                continue 'read;
                             },
                         }
                     },
@@ -422,7 +422,7 @@ fn main() {
                     Err(e) => {
                         error!("failure receiving DATAGRAM failure {:?}", e);
 
-                        break 'read;
+                        continue 'read;
                     },
                 }
             }
@@ -458,12 +458,12 @@ fn main() {
                             s
                         );
 
-                        if qt_streams_complete.contains(&s) {
+                        if client.qt_streams_complete.contains(&s) {
                             return;
                         }
 
                         let qt_stream_data =
-                            qt_streams.entry(s).or_insert(Vec::new());
+                            client.qt_streams.entry(s).or_insert(Vec::new());
 
 
                         trace!(
@@ -497,8 +497,8 @@ fn main() {
                                 let stream_id = if s % 4 == 0 {
                                     s
                                 } else {
-                                    let ret = next_uni_stream_id;
-                                    next_uni_stream_id += 4;
+                                    let ret = client.next_uni_stream_id;
+                                    client.next_uni_stream_id += 4;
                                     ret
                                 };
 
@@ -515,7 +515,7 @@ fn main() {
                                     .stream_send(stream_id, len.as_bytes(), true)
                                     .unwrap();
 
-                                qt_streams_complete.insert(s);
+                                client.qt_streams_complete.insert(s);
 
                             }
                         }
@@ -538,17 +538,17 @@ fn main() {
 
                             Err(e) => {
                                 error!("failed to send dgram bytes back {:?}", e);
-                                break;
+                                continue 'read;
                             },
                         }
                     },
 
-                    Err(quiche::Error::Done) => break,
+                    Err(quiche::Error::Done) => continue 'read,
 
                     Err(e) => {
                         error!("failure receiving DATAGRAM failure {:?}", e);
 
-                        break 'read;
+                        continue 'read;
                     },
                 }
             }
@@ -573,7 +573,7 @@ fn main() {
 
                     Err(e) => {
                         error!("failed to create HTTP/3 connection: {}", e);
-                        break 'read;
+                        continue 'read;
                     },
                 };
 

@@ -336,15 +336,7 @@ fn main() {
             // If we negotiated WebTransport, once the QUIC connection is
             // established try to read DATAGRAMs.
             if let Some(_) = &mut quictransport_conn {
-                if honks_complete && dgrams_complete {
-                    trace!("All datagram and stream data was echoed, closing...");
-                    match conn.close(true, 0x00, b"kthxbye") {
-                        // Already closed.
-                        Ok(_) | Err(quiche::Error::Done) => (),
 
-                        Err(e) => panic!("error closing conn: {:?}", e),
-                    }
-                }
 
                 for s in conn.readable() {
                     while let Ok((read, fin)) = conn.stream_recv(s, &mut buf) {
@@ -405,24 +397,28 @@ fn main() {
 
                             dgrams_complete = true;
 
-                            /*match conn.close(true, 0x00, b"kthxbye") {
-                                // Already closed.
-                                Ok(_) | Err(quiche::Error::Done) => (),
-
-                                Err(e) => panic!("error closing conn: {:?}", e),
-                            }*/
-
-                            break;
                         }
                     },
 
-                    Err(quiche::Error::Done) => break,
+                    Err(quiche::Error::Done) => (),
 
                     Err(e) => {
                         error!("failure receiving DATAGRAM failure {:?}", e);
 
                         break 'read;
                     },
+                }
+
+                if honks_complete && dgrams_complete {
+                    info!("All datagram and stream data was echoed, closing...");
+                    match conn.close(true, 0x00, b"kthxbye") {
+                        // Already closed.
+                        Ok(_) | Err(quiche::Error::Done) => (),
+
+                        Err(e) => panic!("error closing conn: {:?}", e),
+                    }
+
+                    break 'read;
                 }
             }
         }
