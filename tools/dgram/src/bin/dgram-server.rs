@@ -61,6 +61,7 @@ Options:
   --no-retry                  Disable stateless retry.
   --no-grease                 Don't send GREASE.
   -a --app-proto PROTO        Application protocol (siduck, h3, wq-vvv) on which to send DATAGRAM [default: siduck]
+  --max-idle-timeout MS       Advertised timeout in milliseconds [default: 60000].
   -h --help                   Show this screen.
 ";
 
@@ -101,8 +102,8 @@ fn main() {
     let max_stream_data = args.get_str("--max-stream-data");
     let max_stream_data = u64::from_str_radix(max_stream_data, 10).unwrap();
 
-    // let max_streams_bidi = args.get_str("--max-streams-bidi");
-    // let max_streams_bidi = u64::from_str_radix(max_streams_bidi, 10).unwrap();
+    let max_idle_timeout = args.get_str("--max-idle-timeout");
+    let max_idle_timeout = u64::from_str_radix(max_idle_timeout, 10).unwrap();
 
     // let max_streams_uni = args.get_str("--max-streams-uni");
     // let max_streams_uni = u64::from_str_radix(max_streams_uni, 10).unwrap();
@@ -159,7 +160,7 @@ fn main() {
 
     config.set_application_protos(app_params.proto).unwrap();
 
-    config.set_max_idle_timeout(60000);
+    config.set_max_idle_timeout(max_idle_timeout);
     config.set_max_udp_payload_size(MAX_DATAGRAM_SIZE as u64);
     config.set_initial_max_data(max_data);
     config.set_initial_max_stream_data_bidi_local(max_stream_data);
